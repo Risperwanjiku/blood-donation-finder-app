@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "433036287591",
+    "project_id": "blood-donation-finder-a2b7c",
+    "storage_bucket": "blood-donation-finder-a2b7c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:433036287591:android:d536561d050713e3097ec2",
+        "android_client_info": {
+          "package_name": "com.example.test_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDWNTvfBChglKgajeKuXU9Jiu-yomNsesw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

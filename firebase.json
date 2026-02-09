@@ -1,0 +1,36 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "blood-donation-finder-a2b7c",
+          "appId": "1:433036287591:android:d536561d050713e3097ec2",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "blood-donation-finder-a2b7c",
+          "configurations": {
+            "android": "1:433036287591:android:d536561d050713e3097ec2",
+            "web": "1:433036287591:web:74aecbf6eb3ce063097ec2"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ]
+}
