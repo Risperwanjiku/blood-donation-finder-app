@@ -7,6 +7,25 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:433036287591:android:d94b926bc2135a59097ec2",
+        "android_client_info": {
+          "package_name": "com.damulink.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDWNTvfBChglKgajeKuXU9Jiu-yomNsesw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:433036287591:android:d536561d050713e3097ec2",
         "android_client_info": {
           "package_name": "com.example.test_app"

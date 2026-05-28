@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:test_app/configs/colors.dart';
+import 'package:damulink/configs/colors.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class DonorCard extends StatelessWidget {

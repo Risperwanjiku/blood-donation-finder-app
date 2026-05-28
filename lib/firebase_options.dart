@@ -61,7 +61,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyDWNTvfBChglKgajeKuXU9Jiu-yomNsesw',
-    appId: '1:433036287591:android:d536561d050713e3097ec2',
+    appId: '1:433036287591:android:d94b926bc2135a59097ec2',
     messagingSenderId: '433036287591',
     projectId: 'blood-donation-finder-a2b7c',
     storageBucket: 'blood-donation-finder-a2b7c.firebasestorage.app',

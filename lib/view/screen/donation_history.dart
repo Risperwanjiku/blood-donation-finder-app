@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:test_app/configs/colors.dart';
+import 'package:damulink/configs/colors.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';

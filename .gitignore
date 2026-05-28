@@ -43,3 +43,15 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Environment variables — never commit API keys or other secrets
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Android release signing — keystores and credentials must never be committed.
+# If leaked, attackers can publish malicious apps under your name on Play Store.
+**/android/key.properties
+**/android/app/*.jks
+**/android/app/*.keystore

@@ -58,9 +58,12 @@ class NotificationService {
       if (token != null) {
         await _updateTokenInFirestore(token);
         print('=== TOKEN SAVED TO FIRESTORE ===');
+      } else {
+        print('=== FCM TOKEN IS NULL — token could not be generated ===');
       }
-    } catch (e) {
-      print('Error getting FCM token: $e');
+    } catch (e, stackTrace) {
+      print('=== ERROR SAVING FCM TOKEN: $e ===');
+      print('Stack trace: $stackTrace');
     }
   }
 
@@ -136,29 +139,36 @@ class NotificationService {
         return;
       }
 
-      // Collect FCM tokens and user IDs (exclude the requester)
-      List<Map<String, String>> donors = [];
+      // Collect compatible donors (exclude the requester themselves).
+      // Note: fcm_token is no longer required — donors without a token still
+      // get the in-app notification. The token is only used for real push
+      // delivery via Cloud Functions (Blaze plan), documented as the
+      // production deployment path.
+      List<Map<String, String?>> donors = [];
       for (var doc in usersSnapshot.docs) {
         Map<String, dynamic> userData = doc.data() as Map<String, dynamic>;
-        if (userData['fcm_token'] != null && doc.id != requesterId) {
+        if (doc.id != requesterId) {
           donors.add({
             'id': doc.id,
-            'token': userData['fcm_token'],
+            'token': userData['fcm_token'], // may be null — that's OK
           });
         }
       }
 
       if (donors.isEmpty) {
-        print('No donors with FCM tokens found');
+        print('No compatible donors found (excluding requester)');
         return;
       }
 
-      print('Sending notifications to ${donors.length} donors');
+      print('Creating in-app notifications for ${donors.length} compatible donors');
 
-      // Send notification to each donor
+      // Create an in-app notification document for each donor.
+      // If they have an fcm_token, it's included so a future Cloud Function
+      // can pick it up and send a real push. Without a token, the donor still
+      // sees the notification in their in-app list.
       for (var donor in donors) {
         await _sendPushNotification(
-          token: donor['token']!,
+          token: donor['token'] ?? '',
           recipientId: donor['id']!,
           requestId: requestId,
           title: '🚨 Urgent: $bloodType Blood Needed',
@@ -166,7 +176,7 @@ class NotificationService {
         );
       }
 
-      print('Notifications sent successfully');
+      print('In-app notifications created successfully');
     } catch (e) {
       print('Error notifying donors: $e');
     }

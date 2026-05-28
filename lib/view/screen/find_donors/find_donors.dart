@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:test_app/configs/colors.dart';
-import 'package:test_app/view/screen/find_donors/donor_card.dart';
+import 'package:damulink/configs/colors.dart';
+import 'package:damulink/view/screen/find_donors/donor_card.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class FindDonors extends StatefulWidget {

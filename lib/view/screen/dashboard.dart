@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:test_app/configs/colors.dart';
-import 'package:test_app/view/screen/blood_requests/blood_requests.dart';
-import 'package:test_app/view/screen/find_donors/find_donors.dart';
-import 'package:test_app/view/widgets/record_donation_dialog.dart';
+import 'package:damulink/configs/theme.dart';
+import 'package:damulink/configs/donation_rules.dart';
+import 'package:damulink/configs/location_utils.dart';
+import 'package:damulink/configs/blood_compatibility.dart';
+import 'package:damulink/view/screen/blood_requests/blood_requests.dart';
+import 'package:damulink/view/widgets/record_donation_dialog.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -17,35 +19,23 @@ class Dashboard extends StatefulWidget {
 }
 
 class _DashboardState extends State<Dashboard> {
-  var store = GetStorage();
+  final GetStorage store = GetStorage();
 
   String userName = "User";
   String bloodType = "O+";
   bool isAvailable = true;
+  String? userCity;
 
   int livesSaved = 0;
   int totalDonations = 0;
   int daysUntilNextDonation = 0;
 
   List<Map<String, dynamic>> bloodRequests = [];
-  Map<String, int> responseCountMap = {};
 
   bool isLoading = true;
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-
-  // Blood type compatibility - who can DONATE to whom
-  static const Map<String, List<String>> canDonateTo = {
-    "O-": ["O-", "O+", "A-", "A+", "B-", "B+", "AB-", "AB+"],
-    "O+": ["O+", "A+", "B+", "AB+"],
-    "A-": ["A-", "A+", "AB-", "AB+"],
-    "A+": ["A+", "AB+"],
-    "B-": ["B-", "B+", "AB-", "AB+"],
-    "B+": ["B+", "AB+"],
-    "AB-": ["AB-", "AB+"],
-    "AB+": ["AB+"],
-  };
 
   @override
   void initState() {
@@ -54,617 +44,718 @@ class _DashboardState extends State<Dashboard> {
   }
 
   Future<void> loadAllData() async {
-    setState(() {
-      isLoading = true;
-    });
-
+    setState(() => isLoading = true);
     await loadUserData();
     await loadBloodRequests();
     await loadDonationStats();
-
-    setState(() {
-      isLoading = false;
-    });
+    if (mounted) setState(() => isLoading = false);
   }
 
   Future<void> loadUserData() async {
-    setState(() {
-      userName = store.read("user_name") ?? "User";
-      bloodType = store.read("blood_type") ?? "O+";
-      isAvailable = store.read("is_available") ?? true;
-    });
+    final user = _auth.currentUser;
+    if (user == null) return;
 
-    User? user = _auth.currentUser;
-    if (user != null) {
-      DocumentSnapshot userDoc =
-      await _firestore.collection('users').doc(user.uid).get();
-      if (userDoc.exists) {
-        Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+    try {
+      final userDoc =
+          await _firestore.collection('users').doc(user.uid).get();
+      if (userDoc.exists && mounted) {
+        final userData = userDoc.data() ?? {};
         setState(() {
-          userName = userData['name'] ?? "User";
-          bloodType = userData['blood_type'] ?? "O+";
-          isAvailable = userData['is_available'] ?? true;
+          userName = userData['name'] ?? store.read("user_name") ?? "User";
+          bloodType =
+              userData['blood_type'] ?? store.read("blood_type") ?? "O+";
+          isAvailable =
+              userData['is_available'] ?? store.read("is_available") ?? true;
           livesSaved = userData['lives_saved'] ?? 0;
           totalDonations = userData['total_donations'] ?? 0;
+          userCity = LocationUtils.extractCity(
+              (userData['location'] as String?) ?? '');
         });
+      }
+    } catch (e) {
+      debugPrint("Error loading user data: $e");
+    }
+  }
+
+  // ============================================================
+  // Availability toggle — syncs BOTH /users and /public_profiles
+  // atomically. Without this batch, other donors browsing for matches
+  // would see a stale availability state on /public_profiles.
+  // ============================================================
+  void updateAvailability(bool value) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final batch = _firestore.batch();
+
+      batch.update(
+        _firestore.collection('users').doc(user.uid),
+        {'is_available': value},
+      );
+
+      batch.update(
+        _firestore.collection('public_profiles').doc(user.uid),
+        {'is_available': value},
+      );
+
+      await batch.commit();
+      store.write("is_available", value);
+    } catch (e) {
+      // If the sync fails, revert the local UI flip so the donor knows
+      if (mounted) {
+        setState(() => isAvailable = !value);
+        Get.snackbar(
+          "Couldn't update availability",
+          "Please check your connection and try again.",
+          snackPosition: SnackPosition.TOP,
+          backgroundColor: AppColors.primarySoft,
+          colorText: AppColors.primaryDark,
+        );
       }
     }
   }
 
-  void updateAvailability(bool value) async {
-    User? user = _auth.currentUser;
-    if (user != null) {
-      await _firestore.collection('users').doc(user.uid).update({
-        'is_available': value,
-      });
-      store.write("is_available", value);
-    }
-  }
-
+  // ============================================================
+  // Load compatible blood requests, filtered by donor's city.
+  //
+  // Blood-type compatibility now uses the shared BloodCompatibility
+  // utility (single source of truth, shared with donor_browse) rather
+  // than a locally-duplicated map.
+  //
+  // The previous response-count loop was removed because it queried
+  // /responses on documents the donor doesn't own (fails Firestore
+  // rules), and the count was never rendered. Response counts are now
+  // denormalized onto the request doc by a Cloud Function.
+  // ============================================================
   Future<void> loadBloodRequests() async {
     try {
-      User? user = _auth.currentUser;
+      final user = _auth.currentUser;
 
-      QuerySnapshot allSnapshot = await _firestore
+      Query<Map<String, dynamic>> query = _firestore
           .collection('blood_requests')
-          .where('status', isEqualTo: 'pending')
+          .where('status', isEqualTo: 'pending');
+
+      // Filter by city if user has set their location.
+      // Graceful fallback: if no city, show all pending (then filtered
+      // client-side by blood-type compatibility below).
+      if (userCity != null && userCity!.isNotEmpty) {
+        query = query.where('city', isEqualTo: userCity);
+      }
+
+      final allSnapshot = await query
           .orderBy('created_at', descending: true)
+          .limit(50)
           .get();
 
       List<Map<String, dynamic>> requests = allSnapshot.docs.map((doc) {
-        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        final data = doc.data();
         data['id'] = doc.id;
         return data;
       }).toList();
 
-      // Filter to show only requests the user can donate to (based on blood type)
-      // Also exclude user's own requests
-      List<String> canDonateToTypes = canDonateTo[bloodType] ?? [];
+      // Filter by compatibility (shared utility), exclude own requests
+      final canDonateToTypes =
+          BloodCompatibility.compatibleRecipientsFor(bloodType);
       requests = requests.where((request) {
-        bool canHelp = canDonateToTypes.contains(request['blood_type']);
-        bool isOwnRequest = request['requester_id'] == user?.uid;
+        final canHelp = canDonateToTypes.contains(request['blood_type']);
+        final isOwnRequest = request['requester_id'] == user?.uid;
         return canHelp && !isOwnRequest;
       }).toList();
 
-      // Load response counts for each request
-      for (var request in requests) {
-        QuerySnapshot responses = await _firestore
-            .collection('responses')
-            .where('request_id', isEqualTo: request['id'])
-            .get();
-        responseCountMap[request['id']] = responses.docs.length;
+      if (mounted) {
+        setState(() => bloodRequests = requests);
       }
-
-      setState(() {
-        bloodRequests = requests;
-      });
     } catch (e) {
-      print("ERROR loading blood requests: $e");
+      debugPrint("Error loading blood requests: $e");
     }
   }
 
+  // ============================================================
+  // Donation stats — uses centralized DonationRules helper.
+  // Reads the user's gender to apply the correct Kenyan interval
+  // (3 months male / 4 months female / 4 months unknown).
+  // Kept as a standalone method so it can be passed as the refresh
+  // callback to showRecordDonation().
+  // ============================================================
   Future<void> loadDonationStats() async {
-    User? user = _auth.currentUser;
-    if (user != null) {
-      try {
-        DocumentSnapshot userDoc =
-        await _firestore.collection('users').doc(user.uid).get();
+    final user = _auth.currentUser;
+    if (user == null) return;
 
-        if (userDoc.exists) {
-          Map<String, dynamic> userData =
-          userDoc.data() as Map<String, dynamic>;
+    try {
+      final userDoc =
+          await _firestore.collection('users').doc(user.uid).get();
+      if (userDoc.exists && mounted) {
+        final userData = userDoc.data() ?? {};
 
-          // Calculate days until next donation
-          int daysRemaining = 0;
-          if (userData['last_donation_date'] != null) {
-            Timestamp lastDonation = userData['last_donation_date'];
-            DateTime lastDate = lastDonation.toDate();
-            DateTime nextDonationDate = lastDate.add(Duration(days: 56));
-            int difference = nextDonationDate.difference(DateTime.now()).inDays;
-            daysRemaining = difference > 0 ? difference : 0;
-          }
-
-          setState(() {
-            livesSaved = userData['lives_saved'] ?? 0;
-            totalDonations = userData['total_donations'] ?? 0;
-            daysUntilNextDonation = daysRemaining;
-          });
+        int daysRemaining = 0;
+        if (userData['last_donation_date'] != null) {
+          final Timestamp lastDonation = userData['last_donation_date'];
+          final lastDate = lastDonation.toDate();
+          final userGender = userData['gender'] as String?;
+          daysRemaining =
+              DonationRules.daysUntilEligible(lastDate, userGender);
         }
-      } catch (e) {
-        print("Error loading donation stats: $e");
+
+        setState(() {
+          livesSaved = userData['lives_saved'] ?? 0;
+          totalDonations = userData['total_donations'] ?? 0;
+          daysUntilNextDonation = daysRemaining;
+        });
       }
+    } catch (e) {
+      debugPrint("Error loading donation stats: $e");
     }
   }
 
-  void navigateToRequestDetails(String requestId) {
-    Get.toNamed('/request-details', arguments: requestId);
+  String _greeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return "Good morning";
+    if (hour < 17) return "Good afternoon";
+    return "Good evening";
+  }
+
+  void _navigateToRequestDetails(String requestId) {
+    Get.toNamed('/requestDetails', arguments: {
+      'requestId': requestId,
+      'fromBrowse': true,
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    final hasCity = userCity != null && userCity!.isNotEmpty;
+
     return RefreshIndicator(
       onRefresh: loadAllData,
-      color: primaryColor,
+      color: AppColors.primary,
       child: Container(
-        color: Colors.grey[100],
+        color: AppColors.background,
         child: isLoading
-            ? Center(child: CircularProgressIndicator(color: primaryColor))
+            ? const Center(
+                child: CircularProgressIndicator(
+                  color: AppColors.primary,
+                ),
+              )
             : SingleChildScrollView(
-          physics: AlwaysScrollableScrollPhysics(),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Greeting Section
-                Text(
-                  "Hi $userName,",
-                  style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87),
-                ),
-                SizedBox(height: 10),
-                Text(
-                  "Blood type $bloodType.",
-                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                ),
-                SizedBox(height: 30),
-
-                // Availability Toggle
-                Container(
-                  padding: EdgeInsets.all(15),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: isAvailable ? successColor : Colors.grey,
-                      width: 2,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isAvailable
-                                ? "Available to Donate"
-                                : "Not Available",
-                            style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: isAvailable
-                                    ? successColor
-                                    : Colors.grey[700]),
-                          ),
-                          SizedBox(height: 5),
-                          Text(
-                            isAvailable
-                                ? "You will get notifications for requests"
-                                : "You won't get notifications",
-                            style: TextStyle(
-                                fontSize: 12, color: Colors.grey[600]),
-                          ),
-                        ],
-                      ),
-                      Switch(
-                        value: isAvailable,
-                        onChanged: (value) {
-                          setState(() {
-                            isAvailable = value;
-                          });
-                          updateAvailability(value);
-                        },
-                        activeColor: successColor,
-                      ),
-                    ],
-                  ),
-                ),
-                SizedBox(height: 30),
-
-                // Quick Actions
-                Text(
-                  "What would you like to do?",
-                  style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87),
-                ),
-                SizedBox(height: 15),
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (context) => BloodRequests()),
-                          );
-                        },
-                        child: Container(
-                          padding: EdgeInsets.all(20),
-                          decoration: BoxDecoration(
-                            color: primaryColor.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(15),
-                            border: Border.all(color: primaryColor),
-                          ),
-                          child: Column(
-                            children: [
-                              Icon(Icons.bloodtype,
-                                  size: 35, color: primaryColor),
-                              SizedBox(height: 10),
-                              Text(
-                                "Request Blood",
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: primaryColor),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: 15),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (context) => FindDonors()),
-                          );
-                        },
-                        child: Container(
-                          padding: EdgeInsets.all(20),
-                          decoration: BoxDecoration(
-                            color: accentColor.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(15),
-                            border: Border.all(color: accentColor),
-                          ),
-                          child: Column(
-                            children: [
-                              Icon(Icons.search,
-                                  size: 35, color: accentColor),
-                              SizedBox(height: 10),
-                              Text(
-                                "Find Donors",
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: accentColor),
-                              )
-                            ],
-                          ),
-                        ),
-                      ),
-                    )
-                  ],
-                ),
-                SizedBox(height: 30),
-
-                // Donation Stats
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text("My Donation Stats",
-                        style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87)),
-                    TextButton.icon(
-                      onPressed: () =>
-                          showRecordDonation(context, loadDonationStats),
-                      icon: Icon(Icons.add, color: primaryColor, size: 18),
-                      label:
-                      Text("Add", style: TextStyle(color: primaryColor)),
-                    ),
-                  ],
-                ),
-                Container(
-                  padding: EdgeInsets.all(15),
-                  decoration: BoxDecoration(
-                    color: primaryColor,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpace.lg),
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // ============================================
+                      // Greeting + Blood Type Badge
+                      // ============================================
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
-                          Column(
-                            children: [
-                              Text(
-                                "$livesSaved",
-                                style: TextStyle(
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white),
-                              ),
-                              Text(
-                                "Lives Saved",
-                                style: TextStyle(
-                                    fontSize: 12, color: Colors.white70),
-                              ),
-                            ],
-                          ),
-                          Container(
-                            width: 1,
-                            height: 35,
-                            color: Colors.white54,
-                          ),
-                          Column(
-                            children: [
-                              Text(
-                                "$totalDonations",
-                                style: TextStyle(
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white),
-                              ),
-                              Text(
-                                "Total Donations",
-                                style: TextStyle(
-                                    fontSize: 12, color: Colors.white70),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 12),
-                      Text(
-                        daysUntilNextDonation > 0
-                            ? "You can donate again in $daysUntilNextDonation days"
-                            : "You are eligible to donate",
-                        style:
-                        TextStyle(fontSize: 12, color: Colors.white70),
-                      )
-                    ],
-                  ),
-                ),
-                SizedBox(height: 30),
-
-                // Blood Requests Section
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      "People Who Need Blood",
-                      style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87),
-                    ),
-                    if (bloodRequests.isNotEmpty)
-                      TextButton(
-                        onPressed: () {
-                          Get.toNamed('/notifications');
-                        },
-                        child: Text(
-                          "View All",
-                          style: TextStyle(color: primaryColor),
-                        ),
-                      ),
-                  ],
-                ),
-                SizedBox(height: 15),
-
-                bloodRequests.isEmpty
-                    ? Container(
-                  padding: EdgeInsets.all(30),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Center(
-                    child: Column(
-                      children: [
-                        Icon(Icons.check_circle_outline,
-                            size: 50, color: Colors.grey[400]),
-                        SizedBox(height: 12),
-                        Text(
-                          "No blood requests matching your type",
-                          style: TextStyle(color: Colors.grey[600]),
-                          textAlign: TextAlign.center,
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          "You can donate to: ${canDonateTo[bloodType]?.join(', ') ?? 'Unknown'}",
-                          style: TextStyle(
-                              color: Colors.grey[500], fontSize: 12),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-                    : ListView.builder(
-                    shrinkWrap: true,
-                    physics: NeverScrollableScrollPhysics(),
-                    itemCount: bloodRequests.length > 5
-                        ? 5
-                        : bloodRequests.length,
-                    itemBuilder: (context, index) {
-                      var request = bloodRequests[index];
-                      int responseCount =
-                          responseCountMap[request['id']] ?? 0;
-                      Timestamp? createdAt = request['created_at'];
-
-                      return GestureDetector(
-                        onTap: () =>
-                            navigateToRequestDetails(request['id']),
-                        child: Container(
-                          margin: EdgeInsets.only(bottom: 10),
-                          padding: EdgeInsets.all(15),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: request['urgency'] == 'critical'
-                                  ? Colors.red
-                                  : request['urgency'] == 'urgent'
-                                  ? Colors.orange
-                                  : Colors.green,
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  "${_greeting()},",
+                                  style: AppText.caption,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  userName,
+                                  style: AppText.title,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
                             ),
                           ),
-                          child: Column(
-                            crossAxisAlignment:
-                            CrossAxisAlignment.start,
-                            children: [
-                              // Top Row - Urgency Badge & Time
-                              Row(
-                                mainAxisAlignment:
-                                MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Container(
-                                    padding: EdgeInsets.symmetric(
-                                        horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: request['urgency'] ==
-                                          'critical'
-                                          ? Colors.red
-                                          : request['urgency'] ==
-                                          'urgent'
-                                          ? Colors.orange
-                                          : Colors.green,
-                                      borderRadius:
-                                      BorderRadius.circular(5),
-                                    ),
-                                    child: Text(
-                                      request['urgency']
-                                          ?.toUpperCase() ??
-                                          'NORMAL',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ),
-                                  Text(
-                                    createdAt != null
-                                        ? timeago.format(
-                                        createdAt.toDate())
-                                        : '',
-                                    style: TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.grey),
-                                  ),
-                                ],
+                          // Blood type badge — matches mockup exactly
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppSpace.md,
+                              vertical: AppSpace.sm,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary,
+                              borderRadius:
+                                  BorderRadius.circular(AppRadius.md),
+                            ),
+                            child: Text(
+                              bloodType,
+                              style: AppText.subheading.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
                               ),
-                              SizedBox(height: 10),
+                            ),
+                          ),
+                        ],
+                      ),
 
-                              // Blood Type Needed
-                              Text(
-                                "${request['blood_type']} Blood Needed",
-                                style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold),
+                      const SizedBox(height: AppSpace.lg),
+
+                      // ============================================
+                      // Availability Card — compact, like mockup
+                      // ============================================
+                      Container(
+                        padding: const EdgeInsets.all(AppSpace.md),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius:
+                              BorderRadius.circular(AppRadius.lg),
+                          boxShadow: AppShadow.card,
+                        ),
+                        child: Row(
+                          children: [
+                            // Icon matches mockup green silhouette style
+                            Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: isAvailable
+                                    ? AppColors.successSoft
+                                    : AppColors.disabled,
+                                borderRadius:
+                                    BorderRadius.circular(AppRadius.md),
                               ),
-                              SizedBox(height: 8),
-
-                              // Hospital
-                              Row(
-                                children: [
-                                  Icon(Icons.local_hospital,
-                                      size: 14, color: Colors.grey),
-                                  SizedBox(width: 5),
-                                  Expanded(
-                                    child: Text(
-                                      "${request['hospital'] ?? request['location']}",
-                                      style: TextStyle(
-                                          fontSize: 13,
-                                          color: Colors.grey[600]),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
+                              child: Icon(
+                                Icons.volunteer_activism_outlined,
+                                color: isAvailable
+                                    ? AppColors.success
+                                    : AppColors.textTertiary,
+                                size: 22,
                               ),
-                              SizedBox(height: 5),
-
-                              // Units & Responses Row
-                              Row(
-                                mainAxisAlignment:
-                                MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Icon(Icons.opacity,
-                                          size: 14,
-                                          color: Colors.grey),
-                                      SizedBox(width: 5),
-                                      Text(
-                                        "${request['units'] ?? 1} units needed",
-                                        style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey),
-                                      ),
-                                    ],
-                                  ),
-                                  if (responseCount > 0)
-                                    Container(
-                                      padding: EdgeInsets.symmetric(
-                                          horizontal: 8, vertical: 3),
-                                      decoration: BoxDecoration(
-                                        color: Colors.green
-                                            .withOpacity(0.1),
-                                        borderRadius:
-                                        BorderRadius.circular(10),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          Icon(Icons.people,
-                                              size: 12,
-                                              color: Colors.green),
-                                          SizedBox(width: 4),
-                                          Text(
-                                            "$responseCount donor${responseCount > 1 ? 's' : ''} responding",
-                                            style: TextStyle(
-                                                fontSize: 11,
-                                                color: Colors.green,
-                                                fontWeight:
-                                                FontWeight.w500),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                ],
-                              ),
-
-                              SizedBox(height: 10),
-
-                              // Tap to respond hint
-                              Row(
-                                mainAxisAlignment:
-                                MainAxisAlignment.end,
+                            ),
+                            const SizedBox(width: AppSpace.md),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    "Tap to respond",
-                                    style: TextStyle(
-                                        fontSize: 11,
-                                        color: primaryColor,
-                                        fontWeight: FontWeight.w500),
+                                    "Available to Donate",
+                                    style: AppText.subheading,
                                   ),
-                                  SizedBox(width: 4),
-                                  Icon(Icons.arrow_forward_ios,
-                                      size: 10, color: primaryColor),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    isAvailable
+                                        ? "You are eligible to donate blood today."
+                                        : "You won't receive request alerts.",
+                                    style: AppText.caption,
+                                  ),
                                 ],
                               ),
-                            ],
+                            ),
+                            Switch(
+                              value: isAvailable,
+                              onChanged: (value) {
+                                setState(() => isAvailable = value);
+                                updateAvailability(value);
+                              },
+                              activeColor: AppColors.success,
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: AppSpace.md),
+
+                      // ============================================
+                      // Request Blood — full-width (Find Donors removed)
+                      // ============================================
+                      Container(
+                        decoration: BoxDecoration(
+                          borderRadius:
+                              BorderRadius.circular(AppRadius.md),
+                          boxShadow: AppShadow.button,
+                        ),
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      const BloodRequests(),
+                                ),
+                              );
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(
+                                    AppRadius.md),
+                              ),
+                            ),
+                            icon: const Icon(
+                              Icons.monitor_heart_outlined,
+                              size: 20,
+                            ),
+                            label: Text(
+                              "Request Blood",
+                              style: AppText.button,
+                            ),
                           ),
                         ),
-                      );
-                    }),
+                      ),
 
-                SizedBox(height: 20),
-              ],
+                      const SizedBox(height: AppSpace.md),
+
+                      // ============================================
+                      // Stats Card — white compact (matches mockup)
+                      // ============================================
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpace.md,
+                          vertical: AppSpace.lg,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius:
+                              BorderRadius.circular(AppRadius.lg),
+                          boxShadow: AppShadow.card,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  const Icon(
+                                    Icons.favorite,
+                                    color: AppColors.primary,
+                                    size: 28,
+                                  ),
+                                  const SizedBox(height: AppSpace.xs),
+                                  Text(
+                                    "$livesSaved",
+                                    style: AppText.title.copyWith(
+                                      fontSize: 24,
+                                    ),
+                                  ),
+                                  Text(
+                                    "Lives Saved",
+                                    style: AppText.caption,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              width: 1,
+                              height: 56,
+                              color: AppColors.border,
+                            ),
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  const Icon(
+                                    Icons.history,
+                                    color: AppColors.textSecondary,
+                                    size: 28,
+                                  ),
+                                  const SizedBox(height: AppSpace.xs),
+                                  Text(
+                                    "$totalDonations",
+                                    style: AppText.title.copyWith(
+                                      fontSize: 24,
+                                    ),
+                                  ),
+                                  Text(
+                                    "Total Donations",
+                                    style: AppText.caption,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // Eligibility status pill — small, under stats
+                      const SizedBox(height: AppSpace.sm),
+                      Center(
+                        child: GestureDetector(
+                          onTap: () => showRecordDonation(
+                            context,
+                            loadDonationStats,
+                          ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppSpace.md,
+                              vertical: AppSpace.sm,
+                            ),
+                            decoration: BoxDecoration(
+                              color: daysUntilNextDonation > 0
+                                  ? AppColors.disabled
+                                  : AppColors.successSoft,
+                              borderRadius: BorderRadius.circular(
+                                  AppRadius.pill),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  daysUntilNextDonation > 0
+                                      ? Icons.schedule
+                                      : Icons.check_circle_outline,
+                                  size: 14,
+                                  color: daysUntilNextDonation > 0
+                                      ? AppColors.textSecondary
+                                      : AppColors.success,
+                                ),
+                                const SizedBox(width: AppSpace.xs),
+                                Text(
+                                  daysUntilNextDonation > 0
+                                      ? "Next donation in $daysUntilNextDonation day${daysUntilNextDonation == 1 ? '' : 's'}"
+                                      : totalDonations == 0
+                                          ? "Tap to record your first donation"
+                                          : "Eligible to donate today",
+                                  style: AppText.caption.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: AppSpace.lg),
+
+                      // ============================================
+                      // People Who Need Blood — city-filtered
+                      // ============================================
+                      Text(
+                        "People Who Need Blood",
+                        style: AppText.heading,
+                      ),
+                      const SizedBox(height: AppSpace.xs),
+                      Text(
+                        hasCity
+                            ? "Compatible requests in $userCity."
+                            : "Compatible requests matching your blood type.",
+                        style: AppText.caption,
+                      ),
+                      const SizedBox(height: AppSpace.md),
+
+                      bloodRequests.isEmpty
+                          ? _buildEmptyState(hasCity)
+                          : Column(
+                              children: List.generate(
+                                bloodRequests.length > 5
+                                    ? 5
+                                    : bloodRequests.length,
+                                (index) {
+                                  final request = bloodRequests[index];
+                                  final Timestamp? createdAt =
+                                      request['created_at'];
+                                  return _buildRequestCard(
+                                    request: request,
+                                    createdAt: createdAt,
+                                  );
+                                },
+                              ),
+                            ),
+
+                      if (bloodRequests.length > 5) ...[
+                        const SizedBox(height: AppSpace.sm),
+                        Center(
+                          child: TextButton(
+                            onPressed: () =>
+                                Get.toNamed('/notifications'),
+                            child: Text(
+                              "View All Requests",
+                              style: AppText.label.copyWith(
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+
+                      const SizedBox(height: AppSpace.lg),
+                    ],
+                  ),
+                ),
+              ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // Empty state — city-aware
+  // ============================================================
+  Widget _buildEmptyState(bool hasCity) {
+    return Container(
+      padding: const EdgeInsets.all(AppSpace.xl),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        boxShadow: AppShadow.card,
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: const BoxDecoration(
+              color: AppColors.successSoft,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.check_circle_outline,
+              color: AppColors.success,
+              size: 28,
             ),
           ),
+          const SizedBox(height: AppSpace.md),
+          Text(
+            "All clear right now",
+            style: AppText.subheading,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: AppSpace.xs),
+          Text(
+            hasCity
+                ? "No one in $userCity needs your blood type right now. We'll alert you the moment they do."
+                : "No one matching your blood type needs help. We'll alert you the moment they do.",
+            style: AppText.caption,
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // Request card — mockup style: blood type circle, hospital, urgency
+  // ============================================================
+  Widget _buildRequestCard({
+    required Map<String, dynamic> request,
+    required Timestamp? createdAt,
+  }) {
+    final urgency = request['urgency'] ?? 'normal';
+    final urgencyColor = urgency == 'critical'
+        ? AppColors.critical
+        : urgency == 'urgent'
+            ? AppColors.warning
+            : AppColors.success;
+
+    final bloodTypeNeeded = request['blood_type'] ?? '';
+    final hospital = request['hospital'] ?? 'Hospital';
+    final units = request['units_needed'] ?? request['units'] ?? 1;
+
+    return GestureDetector(
+      onTap: () => _navigateToRequestDetails(request['id']),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: AppSpace.sm),
+        padding: const EdgeInsets.all(AppSpace.md),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          boxShadow: AppShadow.card,
+        ),
+        child: Row(
+          children: [
+            // Blood type circle — left of card, matches mockup
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: bloodTypeNeeded.contains('-')
+                    ? AppColors.disabled
+                    : AppColors.primary,
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: Text(
+                  bloodTypeNeeded,
+                  style: AppText.caption.copyWith(
+                    color: bloodTypeNeeded.contains('-')
+                        ? AppColors.textPrimary
+                        : Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpace.md),
+
+            // Middle: description
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "$bloodTypeNeeded blood needed",
+                    style: AppText.bodyStrong,
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.local_hospital_outlined,
+                        size: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          hospital,
+                          style: AppText.caption,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (createdAt != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      "$units unit${units > 1 ? 's' : ''} • ${timeago.format(createdAt.toDate())}",
+                      style: AppText.caption.copyWith(
+                        color: AppColors.textTertiary,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            const SizedBox(width: AppSpace.sm),
+
+            // Right: urgency badge + chevron
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpace.sm,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: urgencyColor,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: Text(
+                    urgency.toUpperCase(),
+                    style: AppText.caption.copyWith(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpace.xs),
+                const Icon(
+                  Icons.chevron_right,
+                  size: 18,
+                  color: AppColors.textTertiary,
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
