@@ -213,12 +213,16 @@ class _EditProfileState extends State<EditProfile> {
         'blood_type': bloodType,
       });
 
-      // /public_profiles mirrors the donor-visible blood_type, so it must
-      // stay in sync with /users. merge:true protects is_available and
-      // other public fields managed elsewhere.
+      // /public_profiles mirrors the donor-visible fields the fan-out
+      // queries on (blood_type and city). They must stay in sync with
+      // /users. merge:true protects is_available, first_name, profile_pic
+      // and other public fields managed elsewhere.
       batch.set(
         _firestore.collection('public_profiles').doc(user.uid),
-        {'blood_type': bloodType},
+        {
+          'blood_type': bloodType,
+          'city': location,
+        },
         SetOptions(merge: true),
       );
 

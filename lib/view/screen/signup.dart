@@ -4,6 +4,7 @@ import 'package:damulink/configs/theme.dart';
 import 'package:damulink/configs/legal_content.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:damulink/configs/location_utils.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -280,6 +281,7 @@ class _SignupScreenState extends State<SignupScreen> {
         'is_available': true,
         'first_name': nameController.text.trim().split(' ').first,
         'profile_pic': '',
+        'city': LocationUtils.extractCity(locationController.text.trim()),
       });
 
       try {
