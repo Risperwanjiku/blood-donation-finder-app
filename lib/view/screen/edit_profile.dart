@@ -8,6 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:damulink/configs/theme.dart';
+import 'package:damulink/services/notification_service.dart';
 
 class EditProfile extends StatefulWidget {
   const EditProfile({super.key});
@@ -437,6 +438,10 @@ class _EditProfileState extends State<EditProfile> {
 
     if (confirmed != true) return;
 
+    // Clear FCM token BEFORE sign-out so the leftover doesn't keep
+    // receiving pushes for this account on this device. Must run while
+    // we still have auth permission to write /users/{uid}.
+    await NotificationService().removeToken();
     await _auth.signOut();
     _store.erase();
     // TODO: change '/login' to match your actual login route name.

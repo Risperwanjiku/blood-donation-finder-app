@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:damulink/configs/theme.dart';
 import 'package:damulink/configs/legal_content.dart';
+import 'package:damulink/services/notification_service.dart';
 
 class Settings extends StatefulWidget {
   const Settings({super.key});
@@ -106,6 +107,10 @@ class _SettingsState extends State<Settings> {
 
     if (confirmed != true) return;
 
+    // Clear FCM token BEFORE sign-out so the leftover doesn't keep
+    // receiving pushes for this account on this device. Must run while
+    // we still have auth permission to write /users/{uid}.
+    await NotificationService().removeToken();
     await _auth.signOut();
     _store.erase();
     Get.offAllNamed('/login');
