@@ -310,6 +310,7 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
     final hospital =
         (publicData['hospital'] ?? 'Unknown hospital').toString();
     final hospitalArea = (publicData['hospital_area'] ?? '').toString();
+    final placeId = (publicData['hospital_place_id'] ?? '').toString();
     final units =
         _readInt(publicData['units_needed'] ?? publicData['units']);
     final initials = (publicData['patient_initials'] ?? '').toString();
@@ -339,18 +340,23 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
             _buildCompatibilityBanner(isCompatible),
           if (_donorBloodType != null) const SizedBox(height: AppSpace.lg),
           _buildInfoCard([
+            // Hospital row is tappable in pre-commit — a donor can preview
+            // the route before deciding to offer. Post-commit has a
+            // dedicated Get Directions button instead.
             _InfoRow(
               icon: Icons.local_hospital_outlined,
               label: 'Hospital',
               value: hospital,
               caption: hospitalArea.isNotEmpty ? hospitalArea : null,
+              onTap: () => _openDirections(hospital, hospitalArea, placeId),
             ),
+            // No caption here — the privacy notice panel below explains
+            // why only initials are shown. Repeating it on the row was
+            // redundant friction.
             _InfoRow(
               icon: Icons.person_outline,
               label: 'Patient',
               value: initials.isNotEmpty ? initials : '—',
-              caption:
-                  'Initials only — full name shared after you offer',
             ),
             _InfoRow(
               icon: Icons.access_time,
@@ -1241,17 +1247,19 @@ class _InfoRow extends StatelessWidget {
   final String label;
   final String value;
   final String? caption;
+  final VoidCallback? onTap;
 
   const _InfoRow({
     required this.icon,
     required this.label,
     required this.value,
     this.caption,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    final content = Padding(
       padding: const EdgeInsets.symmetric(vertical: AppSpace.sm),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1301,8 +1309,27 @@ class _InfoRow extends StatelessWidget {
               ],
             ),
           ),
+          // Subtle chevron when the row is tappable — standard tap
+          // affordance, lets the user know they can drill in.
+          if (onTap != null)
+            Padding(
+              padding: const EdgeInsets.only(left: AppSpace.sm, top: 8),
+              child: Icon(
+                Icons.chevron_right,
+                size: 20,
+                color: AppColors.textTertiary,
+              ),
+            ),
         ],
       ),
+    );
+
+    if (onTap == null) return content;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.sm),
+      child: content,
     );
   }
 }
