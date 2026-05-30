@@ -70,7 +70,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
-          onPressed: () => Get.back(),
+          // Native Navigator pop avoids a GetX bug where Get.back() tries
+          // to close a non-existent snackbar overlay and crashes.
+          onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text(
           'Notifications',
@@ -323,13 +325,20 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           color: Colors.transparent,
           child: InkWell(
             onTap: () => _open(doc.id, requestId),
+            // IntrinsicHeight gives the Row a bounded height (the tallest
+            // child's natural height) so CrossAxisAlignment.stretch can
+            // size the left priority strip. Without this wrapper, the Row
+            // inherits the ListView's unbounded vertical constraints and
+            // the stretch demand resolves to infinity → render crash.
             child: accent != null
-                ? Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Container(width: 4, color: accent),
-                      Expanded(child: content),
-                    ],
+                ? IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(width: 4, color: accent),
+                        Expanded(child: content),
+                      ],
+                    ),
                   )
                 : content,
           ),
