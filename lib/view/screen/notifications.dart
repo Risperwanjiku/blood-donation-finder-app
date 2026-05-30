@@ -23,7 +23,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           .doc(notificationId)
           .update({'read': true});
     } catch (_) {
-      // Non-critical — the unread badge will simply update on next load.
+      // Non-critical — the unread badge will update on next load.
     }
   }
 
@@ -76,8 +76,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         ),
         title: Text(
           'Notifications',
-          style:
-              AppText.heading.copyWith(color: AppColors.primary, fontSize: 18),
+          style: AppText.heading.copyWith(
+            color: AppColors.primary,
+            fontSize: 18,
+          ),
         ),
         actions: [
           if (user != null)
@@ -143,74 +145,129 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
+  // ─── New card design ─────────────────────────────────────────────────
+  //
+  // One strong urgency signal (the colored left bar) instead of stacked
+  // decorations. Cards stay white in both read and unread states; read
+  // state is conveyed by muted icon + text colors. Actions are
+  // low-emphasis text links in the bottom-right, not dominant buttons.
+  // The whole card is tappable; the link is a visual affordance, not the
+  // only tap target.
   Widget _buildNotificationCard(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
 
     final bool isRead = data['read'] ?? false;
-    final String title = (data['title'] ?? 'Notification').toString();
+    final String rawTitle = (data['title'] ?? 'Notification').toString();
     final String body = (data['body'] ?? '').toString();
     final Timestamp? ts = data['created_at'] as Timestamp?;
     final String timeAgo = ts != null ? timeago.format(ts.toDate()) : '';
     final String? requestId = data['request_id'] as String?;
     final String urgency = (data['urgency'] as String?) ?? '';
 
-    // type drives the icon/colour. If absent, infer from whether the
-    // notification links to a request. Your fan-out should set 'type'
-    // (and 'urgency') explicitly.
     final String type = (data['type'] as String?) ??
         (requestId != null ? 'request' : 'general');
 
-    // ─── Visual mapping per type ───
+    // Defensively strip decorative emojis the Cloud Function may have
+    // prepended — we color the urgency word inline instead.
+    final String title = rawTitle
+        .replaceAll('🚨 ', '')
+        .replaceAll('⚠️ ', '')
+        .trim();
+
+    // ─── Icon mapping per type (active = unread state) ───
     late IconData icon;
-    late Color iconColor;
-    late Color iconBg;
-    Color? accent; // left priority strip (null = none)
-    String? actionLabel; // null = no button
+    late Color iconColorActive;
+    late Color iconBgActive;
+    String? actionLabel;
 
     switch (type) {
       case 'request':
       case 'new_request':
         icon = Icons.bloodtype;
-        iconColor = AppColors.primary;
-        iconBg = AppColors.primarySoft;
-        if (urgency == 'critical') {
-          accent = AppColors.critical;
-          actionLabel = 'Respond Now';
-        } else if (urgency == 'urgent') {
-          accent = AppColors.warning;
-          actionLabel = 'View Details';
-        } else {
-          actionLabel = 'View Details';
-        }
+        iconColorActive = AppColors.primary;
+        iconBgActive = AppColors.primarySoft;
+        actionLabel =
+            (urgency == 'critical') ? 'Respond now' : 'View details';
         break;
       case 'response':
         icon = Icons.favorite;
-        iconColor = AppColors.success;
-        iconBg = AppColors.successSoft;
-        actionLabel = (requestId != null) ? 'View Details' : null;
+        iconColorActive = AppColors.success;
+        iconBgActive = AppColors.successSoft;
+        actionLabel = (requestId != null) ? 'View details' : null;
         break;
       case 'eligibility':
       case 'reminder':
         icon = Icons.event_available_outlined;
-        iconColor = AppColors.textSecondary;
-        iconBg = AppColors.disabled;
+        iconColorActive = AppColors.textSecondary;
+        iconBgActive = AppColors.disabled;
         break;
       case 'donation':
         icon = Icons.check_circle_outline;
-        iconColor = AppColors.success;
-        iconBg = AppColors.successSoft;
+        iconColorActive = AppColors.success;
+        iconBgActive = AppColors.successSoft;
         break;
       default:
         icon = Icons.notifications_outlined;
-        iconColor = AppColors.textSecondary;
-        iconBg = AppColors.disabled;
-        actionLabel = (requestId != null) ? 'View Details' : null;
+        iconColorActive = AppColors.textSecondary;
+        iconBgActive = AppColors.disabled;
+        actionLabel = (requestId != null) ? 'View details' : null;
     }
 
-    final Color cardBg = isRead ? AppColors.surface : AppColors.primarySoft;
+    // ─── The single urgency signal: a bold left bar (critical/urgent only) ───
+    Color? accent;
+    if (urgency == 'critical') {
+      accent = AppColors.critical;
+    } else if (urgency == 'urgent') {
+      accent = AppColors.warning;
+    }
 
-    final Widget content = Container(
-      color: cardBg,
+    // ─── Read state mutes icon + text (no separate red dot) ───
+    final Color iconColor =
+        isRead ? AppColors.textTertiary : iconColorActive;
+    final Color iconBg = isRead ? AppColors.disabled : iconBgActive;
+    final Color titleColor =
+        isRead ? AppColors.textSecondary : AppColors.textPrimary;
+    final FontWeight titleWeight =
+        isRead ? FontWeight.w600 : FontWeight.w700;
+
+    // ─── Title: color the "Critical:" / "Urgent:" prefix when present ───
+    Widget titleWidget;
+    final int colonIdx = title.indexOf(':');
+    if (accent != null && colonIdx > 0) {
+      final String prefix = title.substring(0, colonIdx + 1);
+      final String rest = title.substring(colonIdx + 1);
+      titleWidget = Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: prefix,
+              style: AppText.bodyStrong.copyWith(
+                color: accent,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            TextSpan(
+              text: rest,
+              style: AppText.bodyStrong.copyWith(
+                color: titleColor,
+                fontWeight: titleWeight,
+              ),
+            ),
+          ],
+        ),
+      );
+    } else {
+      titleWidget = Text(
+        title,
+        style: AppText.bodyStrong.copyWith(
+          color: titleColor,
+          fontWeight: titleWeight,
+        ),
+      );
+    }
+
+    // ─── Card body (everything right of the optional left bar) ───
+    final Widget cardBody = Padding(
       padding: const EdgeInsets.all(AppSpace.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -221,8 +278,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               Container(
                 width: 40,
                 height: 40,
-                decoration:
-                    BoxDecoration(color: iconBg, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: iconBg,
+                  shape: BoxShape.circle,
+                ),
                 child: Icon(icon, color: iconColor, size: 20),
               ),
               const SizedBox(width: AppSpace.md),
@@ -233,40 +292,30 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Text(
-                            title,
-                            style: AppText.bodyStrong.copyWith(
-                              fontWeight:
-                                  isRead ? FontWeight.w600 : FontWeight.w800,
-                            ),
-                          ),
-                        ),
+                        Expanded(child: titleWidget),
                         const SizedBox(width: AppSpace.sm),
-                        Text(
-                          timeAgo,
-                          style: AppText.caption.copyWith(
-                            color: AppColors.textTertiary,
-                            fontSize: 11,
-                          ),
-                        ),
-                        if (!isRead) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            width: 8,
-                            height: 8,
-                            margin: const EdgeInsets.only(top: 5),
-                            decoration: const BoxDecoration(
-                              color: AppColors.primary,
-                              shape: BoxShape.circle,
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            timeAgo,
+                            style: AppText.caption.copyWith(
+                              color: AppColors.textTertiary,
+                              fontSize: 11,
                             ),
                           ),
-                        ],
+                        ),
                       ],
                     ),
                     if (body.isNotEmpty) ...[
                       const SizedBox(height: 4),
-                      Text(body, style: AppText.caption),
+                      Text(
+                        body,
+                        style: AppText.caption.copyWith(
+                          color: isRead
+                              ? AppColors.textTertiary
+                              : AppColors.textSecondary,
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -274,48 +323,29 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             ],
           ),
           if (actionLabel != null) ...[
-            const SizedBox(height: AppSpace.md),
-            SizedBox(
-              width: double.infinity,
-              height: 44,
-              child: actionLabel == 'Respond Now'
-                  ? ElevatedButton(
-                      onPressed: () => _open(doc.id, requestId),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                        ),
-                      ),
-                      child: Text(actionLabel,
-                          style: AppText.button.copyWith(fontSize: 14)),
-                    )
-                  : OutlinedButton(
-                      onPressed: () => _open(doc.id, requestId),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primary,
-                        side: const BorderSide(color: AppColors.primary),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                        ),
-                      ),
-                      child: Text(
-                        actionLabel,
-                        style: AppText.button
-                            .copyWith(fontSize: 14, color: AppColors.primary),
-                      ),
-                    ),
+            const SizedBox(height: AppSpace.sm),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                '$actionLabel →',
+                style: AppText.label.copyWith(
+                  color: isRead
+                      ? AppColors.textSecondary
+                      : AppColors.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
           ],
         ],
       ),
     );
 
+    // ─── Card wrapper: white surface + shadow + optional accent bar ───
     return Container(
-      margin: const EdgeInsets.only(bottom: AppSpace.sm),
+      margin: const EdgeInsets.only(bottom: AppSpace.md),
       decoration: BoxDecoration(
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(AppRadius.lg),
         boxShadow: AppShadow.card,
       ),
@@ -325,22 +355,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           color: Colors.transparent,
           child: InkWell(
             onTap: () => _open(doc.id, requestId),
-            // IntrinsicHeight gives the Row a bounded height (the tallest
-            // child's natural height) so CrossAxisAlignment.stretch can
-            // size the left priority strip. Without this wrapper, the Row
-            // inherits the ListView's unbounded vertical constraints and
-            // the stretch demand resolves to infinity → render crash.
+            // IntrinsicHeight gives the Row a bounded height so the 8px
+            // left accent bar can stretch the full card height with no gap.
             child: accent != null
                 ? IntrinsicHeight(
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Container(width: 4, color: accent),
-                        Expanded(child: content),
+                        Container(width: 8, color: accent),
+                        Expanded(child: cardBody),
                       ],
                     ),
                   )
-                : content,
+                : cardBody,
           ),
         ),
       ),
@@ -365,11 +392,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 color: AppColors.surface,
                 shape: BoxShape.circle,
               ),
-              child:
-                  Icon(icon, size: 36, color: AppColors.textTertiary),
+              child: Icon(icon, size: 36, color: AppColors.textTertiary),
             ),
             const SizedBox(height: AppSpace.md),
-            Text(title, style: AppText.subheading, textAlign: TextAlign.center),
+            Text(
+              title,
+              style: AppText.subheading,
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: AppSpace.xs),
             Text(
               subtitle,
