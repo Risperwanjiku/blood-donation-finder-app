@@ -352,14 +352,6 @@ class _MyRequestsListState extends State<MyRequestsList> {
     }
   }
 
-  void _viewResponses(Map<String, dynamic> request) {
-    HapticFeedback.lightImpact();
-    Get.toNamed('/responses', arguments: {
-      'requestId': request['id'],
-      'patientName': request['patient_name'] ?? 'Patient',
-    });
-  }
-
   // Tapping a card is intentionally a no-op for now — the card shows
   // everything; incomplete requests just prompt to delete.
   void _openRequestDetails(Map<String, dynamic> request) {
@@ -477,7 +469,6 @@ class _MyRequestsListState extends State<MyRequestsList> {
                 request: request,
                 onMarkDone: () => _showMarkDoneDialog(request),
                 onDelete: () => _showDeleteDialog(request),
-                onViewResponses: () => _viewResponses(request),
                 onOpenDetails: () => _openRequestDetails(request),
               );
             },
@@ -630,7 +621,6 @@ class _RequestCardWrapper extends StatelessWidget {
   final Map<String, dynamic> request;
   final VoidCallback onMarkDone;
   final VoidCallback onDelete;
-  final VoidCallback onViewResponses;
   final VoidCallback onOpenDetails;
 
   const _RequestCardWrapper({
@@ -638,7 +628,6 @@ class _RequestCardWrapper extends StatelessWidget {
     required this.request,
     required this.onMarkDone,
     required this.onDelete,
-    required this.onViewResponses,
     required this.onOpenDetails,
   });
 
@@ -651,7 +640,6 @@ class _RequestCardWrapper extends StatelessWidget {
       request: request,
       onMarkDone: onMarkDone,
       onDelete: onDelete,
-      onViewResponses: onViewResponses,
       onOpenDetails: onOpenDetails,
     );
   }
@@ -753,14 +741,12 @@ class _NormalCard extends StatelessWidget {
   final Map<String, dynamic> request;
   final VoidCallback onMarkDone;
   final VoidCallback onDelete;
-  final VoidCallback onViewResponses;
   final VoidCallback onOpenDetails;
 
   const _NormalCard({
     required this.request,
     required this.onMarkDone,
     required this.onDelete,
-    required this.onViewResponses,
     required this.onOpenDetails,
   });
 
@@ -939,7 +925,6 @@ class _NormalCard extends StatelessWidget {
                         hasResponses: hasResponses,
                         isFulfilled: isFulfilled,
                         isExpired: isExpired,
-                        onTap: hasResponses ? onViewResponses : null,
                       ),
                     ),
                     const SizedBox(width: AppSpace.sm),
@@ -1088,7 +1073,6 @@ class _NormalCard extends StatelessWidget {
     required bool hasResponses,
     required bool isFulfilled,
     required bool isExpired,
-    required VoidCallback? onTap,
   }) {
     if (isFulfilled) {
       return _buildStaticIndicator(
@@ -1109,29 +1093,11 @@ class _NormalCard extends StatelessWidget {
     }
 
     if (hasResponses) {
-      return SizedBox(
-        height: 42,
-        child: OutlinedButton.icon(
-          onPressed: onTap,
-          icon: const Icon(Icons.people,
-              size: 16, color: AppColors.primary),
-          label: Text(
-            'View responses ($responseCount)',
-            style: TextStyle(
-              color: AppColors.primary,
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
-            ),
-            overflow: TextOverflow.ellipsis,
-          ),
-          style: OutlinedButton.styleFrom(
-            side: BorderSide(color: AppColors.primary, width: 1),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppRadius.md),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: AppSpace.sm),
-          ),
-        ),
+      return _buildStaticIndicator(
+        icon: Icons.people,
+        label: responseCount == 1 ? '1 offer' : '$responseCount offers',
+        color: AppColors.primary,
+        background: AppColors.primarySoft.withOpacity(0.4),
       );
     }
 
