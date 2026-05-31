@@ -263,7 +263,6 @@ class _EditProfileState extends State<EditProfile> {
     }
   }
 
-  // ─── PHOTO ─────────────────────────────────────────────
 
   Future<void> _onPhotoTap() async {
     final hasPhoto = _photoUrl != null && _photoUrl!.isNotEmpty;
@@ -444,13 +443,9 @@ class _EditProfileState extends State<EditProfile> {
     await NotificationService().removeToken();
     await _auth.signOut();
     _store.erase();
-    // TODO: change '/login' to match your actual login route name.
     Get.offAllNamed('/login');
   }
 
-  // Improved, polished feedback — matches the floating snackbar style your
-  // HomeScreen uses (icon + rounded + floating), via ScaffoldMessenger
-  // (reliable inside the home shell's Scaffold).
   void _showSnack(String message, {required bool isError}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
