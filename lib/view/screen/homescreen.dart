@@ -33,8 +33,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _notificationService.initialize();
     }
 
-    // Show welcome snackbar after first frame so the Scaffold's
-    // ScaffoldMessenger is ready to attach to.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _maybeShowWelcomeBack();
     });
@@ -46,7 +44,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final shouldShow = _store.read('show_welcome_back') ?? false;
     if (!shouldShow) return;
 
-    // Clear flag first so we never double-show
     _store.remove('show_welcome_back');
 
     final name = _store.read('user_name') as String?;
@@ -54,10 +51,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ? 'Welcome back, $name'
         : "You're signed in";
 
-    // Using ScaffoldMessenger instead of Get.snackbar because Get's
-    // overlay lookup is unreliable right after Get.offAllNamed in
-    // apps that mix `home:` and named routes. ScaffoldMessenger
-    // attaches to this Scaffold directly, which always exists here.
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(

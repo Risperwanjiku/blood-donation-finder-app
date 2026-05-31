@@ -321,10 +321,10 @@ function buildNotificationContent(request) {
   let title;
   let body;
   if (urgency === "critical") {
-    title = `🚨 Critical: ${bloodType} Blood Needed`;
+    title = `Critical: ${bloodType} Blood Needed`;
     body = `${initials} at ${hospital} urgently needs ${bloodType} blood. Can you help?`;
   } else if (urgency === "urgent") {
-    title = `⚠️ Urgent: ${bloodType} Blood Needed`;
+    title = `Urgent: ${bloodType} Blood Needed`;
     body = `${initials} at ${hospital} needs ${bloodType} blood. Can you help?`;
   } else {
     title = `${bloodType} Blood Needed`;

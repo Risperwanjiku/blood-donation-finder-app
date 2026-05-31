@@ -23,7 +23,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           .doc(notificationId)
           .update({'read': true});
     } catch (_) {
-      // Non-critical — the unread badge will update on next load.
     }
   }
 
@@ -42,7 +41,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       }
       await batch.commit();
     } catch (_) {
-      // Ignore — list will reflect actual state on next snapshot.
     }
   }
 
@@ -70,8 +68,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
-          // Native Navigator pop avoids a GetX bug where Get.back() tries
-          // to close a non-existent snackbar overlay and crashes.
+        
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text(
@@ -145,14 +142,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  // ─── New card design ─────────────────────────────────────────────────
-  //
-  // One strong urgency signal (the colored left bar) instead of stacked
-  // decorations. Cards stay white in both read and unread states; read
-  // state is conveyed by muted icon + text colors. Actions are
-  // low-emphasis text links in the bottom-right, not dominant buttons.
-  // The whole card is tappable; the link is a visual affordance, not the
-  // only tap target.
   Widget _buildNotificationCard(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
 
@@ -167,14 +156,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final String type = (data['type'] as String?) ??
         (requestId != null ? 'request' : 'general');
 
-    // Defensively strip decorative emojis the Cloud Function may have
-    // prepended — we color the urgency word inline instead.
     final String title = rawTitle
         .replaceAll('🚨 ', '')
         .replaceAll('⚠️ ', '')
         .trim();
 
-    // ─── Icon mapping per type (active = unread state) ───
     late IconData icon;
     late Color iconColorActive;
     late Color iconBgActive;
@@ -221,7 +207,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       accent = AppColors.warning;
     }
 
-    // ─── Read state mutes icon + text (no separate red dot) ───
     final Color iconColor =
         isRead ? AppColors.textTertiary : iconColorActive;
     final Color iconBg = isRead ? AppColors.disabled : iconBgActive;
@@ -230,7 +215,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final FontWeight titleWeight =
         isRead ? FontWeight.w600 : FontWeight.w700;
 
-    // ─── Title: color the "Critical:" / "Urgent:" prefix when present ───
     Widget titleWidget;
     final int colonIdx = title.indexOf(':');
     if (accent != null && colonIdx > 0) {
@@ -266,7 +250,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       );
     }
 
-    // ─── Card body (everything right of the optional left bar) ───
     final Widget cardBody = Padding(
       padding: const EdgeInsets.all(AppSpace.md),
       child: Column(
@@ -341,7 +324,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       ),
     );
 
-    // ─── Card wrapper: white surface + shadow + optional accent bar ───
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpace.md),
       decoration: BoxDecoration(
@@ -355,8 +337,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           color: Colors.transparent,
           child: InkWell(
             onTap: () => _open(doc.id, requestId),
-            // IntrinsicHeight gives the Row a bounded height so the 8px
-            // left accent bar can stretch the full card height with no gap.
+            
             child: accent != null
                 ? IntrinsicHeight(
                     child: Row(

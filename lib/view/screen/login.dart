@@ -16,15 +16,14 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  // Controllers
+
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
 
-  // Focus nodes — for keyboard "Next" navigation
+  // Focus nodes - for keyboard "Next" navigation
   final emailFocus = FocusNode();
   final passwordFocus = FocusNode();
 
-  // UI state
   bool isLoading = false;
   bool _obscurePassword = true;
   bool _rememberMe = false;
@@ -41,8 +40,6 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
 
-    // Honor "remember me" preference — only pre-fill if the user
-    // explicitly opted in on a previous login.
     final remember = store.read("remember_me") ?? false;
     _rememberMe = remember;
     if (remember) {
@@ -76,9 +73,6 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // ============================================================
-  // Login
-  // ============================================================
   Future<void> login() async {
     setState(() {
       _emailError = null;
@@ -118,7 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       final userData = userDoc.data() as Map<String, dynamic>;
 
-      // Session data — always stored, cleared on logout
+      // Session data - always stored, cleared on logout
       store.write("user_id", userCredential.user!.uid);
       store.write("user_name", userData['name'] ?? '');
       store.write("user_phone", userData['phone'] ?? '');
@@ -138,28 +132,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
       loginController.setItsLoginIn(true);
 
-      // NOTE: email_verified sync block removed.
-      // FirebaseAuth.instance.currentUser.emailVerified is the
-      // source of truth — duplicating it on Firestore was pointless
-      // and recreated the field we deliberately removed from signup.
-
       if (!mounted) return;
       setState(() => isLoading = false);
 
-      // ============================================================
-      // Navigate to home.
-      //
-      // The "Welcome back" snackbar was removed because Get.snackbar()
-      // called around Get.offAllNamed() reliably triggers
-      // "No Overlay widget found" — the snackbar can't attach to either
-      // the dying LoginScreen's overlay or the freshly-mounted
-      // HomeScreen's overlay. Future.delayed didn't fix it either.
-      //
-      // To welcome the user, do it from HomeScreen's initState using
-      // WidgetsBinding.instance.addPostFrameCallback. That's the only
-      // reliably safe place because by then the HomeScreen is fully
-      // mounted with its own overlay.
-      // ============================================================
       store.write('show_welcome_back', true);
       Get.offAllNamed('/homeScreen');
     } on FirebaseAuthException catch (e) {
@@ -207,11 +182,7 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  // ============================================================
-  // Forgot Password — uses showDialog + Navigator.pop for reliable
-  // button-driven dismissal. Controller disposed via whenComplete
-  // so we don't leak one on every dialog open.
-  // ============================================================
+  // Forgot Password - uses showDialog + Navigator.pop for reliable
   void showForgotPasswordDialog() {
     final resetEmailController = TextEditingController(
       text: emailController.text.trim(),
@@ -225,9 +196,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            // Resolve border colors from current error state so the
-            // dialog's email field looks like the login fields when
-            // something's wrong.
+        
             final dialogBorderColor = resetError != null
                 ? AppColors.critical
                 : AppColors.border;
@@ -509,9 +478,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  // ============================================================
-  // Build
-  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -798,9 +764,6 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-// ============================================================
-// Reusable field block
-// ============================================================
 class _Field extends StatelessWidget {
   final String label;
   final String? helper;
@@ -865,9 +828,6 @@ class _Field extends StatelessWidget {
   }
 }
 
-// ============================================================
-// DamuLink logo — pure Flutter
-// ============================================================
 class _DamuLinkLogo extends StatelessWidget {
   final double size;
   const _DamuLinkLogo({this.size = 32});
