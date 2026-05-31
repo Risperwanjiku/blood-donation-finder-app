@@ -77,11 +77,8 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
-  // ============================================================
-  // Availability toggle — syncs BOTH /users and /public_profiles
-  // atomically. Without this batch, other donors browsing for matches
-  // would see a stale availability state on /public_profiles.
-  // ============================================================
+  // Syncs availability to BOTH /users and /public_profiles atomically,
+  // so other donors never see a stale state when browsing for matches.
   void updateAvailability(bool value) async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -102,7 +99,7 @@ class _DashboardState extends State<Dashboard> {
       await batch.commit();
       store.write("is_available", value);
     } catch (e) {
-      // If the sync fails, revert the local UI flip so the donor knows
+      // Revert the local UI flip so the donor knows the sync failed.
       if (mounted) {
         setState(() => isAvailable = !value);
         Get.snackbar(
@@ -116,18 +113,8 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
-  // ============================================================
-  // Load compatible blood requests, filtered by donor's city.
-  //
-  // Blood-type compatibility now uses the shared BloodCompatibility
-  // utility (single source of truth, shared with donor_browse) rather
-  // than a locally-duplicated map.
-  //
-  // The previous response-count loop was removed because it queried
-  // /responses on documents the donor doesn't own (fails Firestore
-  // rules), and the count was never rendered. Response counts are now
-  // denormalized onto the request doc by a Cloud Function.
-  // ============================================================
+  // Loads compatible pending requests, filtered by the donor's city.
+  // Compatibility uses the shared BloodCompatibility utility.
   Future<void> loadBloodRequests() async {
     try {
       final user = _auth.currentUser;
@@ -136,9 +123,8 @@ class _DashboardState extends State<Dashboard> {
           .collection('blood_requests')
           .where('status', isEqualTo: 'pending');
 
-      // Filter by city if user has set their location.
-      // Graceful fallback: if no city, show all pending (then filtered
-      // client-side by blood-type compatibility below).
+      // Filter by city if set; otherwise show all pending and let the
+      // compatibility filter below narrow it.
       if (userCity != null && userCity!.isNotEmpty) {
         query = query.where('city', isEqualTo: userCity);
       }
@@ -154,7 +140,7 @@ class _DashboardState extends State<Dashboard> {
         return data;
       }).toList();
 
-      // Filter by compatibility (shared utility), exclude own requests
+      // Keep only compatible types, and drop the donor's own requests.
       final canDonateToTypes =
           BloodCompatibility.compatibleRecipientsFor(bloodType);
       requests = requests.where((request) {
@@ -171,13 +157,9 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
-  // ============================================================
-  // Donation stats — uses centralized DonationRules helper.
-  // Reads the user's gender to apply the correct Kenyan interval
-  // (3 months male / 4 months female / 4 months unknown).
-  // Kept as a standalone method so it can be passed as the refresh
-  // callback to showRecordDonation().
-  // ============================================================
+  // Donation stats via DonationRules — applies the Kenyan interval by
+  // gender (3mo male / 4mo female / 4mo unknown). Standalone so it can
+  // be passed as the refresh callback to showRecordDonation().
   Future<void> loadDonationStats() async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -244,9 +226,7 @@ class _DashboardState extends State<Dashboard> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // ============================================
-                      // Greeting + Blood Type Badge
-                      // ============================================
+                      // Greeting + blood type badge
                       Row(
                         children: [
                           Expanded(
@@ -266,7 +246,6 @@ class _DashboardState extends State<Dashboard> {
                               ],
                             ),
                           ),
-                          // Blood type badge — matches mockup exactly
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: AppSpace.md,
@@ -290,9 +269,7 @@ class _DashboardState extends State<Dashboard> {
 
                       const SizedBox(height: AppSpace.lg),
 
-                      // ============================================
-                      // Availability Card — compact, like mockup
-                      // ============================================
+                      // Availability card
                       Container(
                         padding: const EdgeInsets.all(AppSpace.md),
                         decoration: BoxDecoration(
@@ -303,7 +280,6 @@ class _DashboardState extends State<Dashboard> {
                         ),
                         child: Row(
                           children: [
-                            // Icon matches mockup green silhouette style
                             Container(
                               width: 44,
                               height: 44,
@@ -356,9 +332,7 @@ class _DashboardState extends State<Dashboard> {
 
                       const SizedBox(height: AppSpace.md),
 
-                      // ============================================
-                      // Request Blood — full-width (Find Donors removed)
-                      // ============================================
+                      // Request Blood button
                       Container(
                         decoration: BoxDecoration(
                           borderRadius:
@@ -401,9 +375,7 @@ class _DashboardState extends State<Dashboard> {
 
                       const SizedBox(height: AppSpace.md),
 
-                      // ============================================
-                      // Stats Card — white compact (matches mockup)
-                      // ============================================
+                      // Stats card
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: AppSpace.md,
@@ -470,7 +442,7 @@ class _DashboardState extends State<Dashboard> {
                         ),
                       ),
 
-                      // Eligibility status pill — small, under stats
+                      // Eligibility pill — tap to record a donation
                       const SizedBox(height: AppSpace.sm),
                       Center(
                         child: GestureDetector(
@@ -521,9 +493,7 @@ class _DashboardState extends State<Dashboard> {
 
                       const SizedBox(height: AppSpace.lg),
 
-                      // ============================================
-                      // People Who Need Blood — city-filtered
-                      // ============================================
+                      // People who need blood — city-filtered
                       Text(
                         "People Who Need Blood",
                         style: AppText.heading,
@@ -581,9 +551,6 @@ class _DashboardState extends State<Dashboard> {
     );
   }
 
-  // ============================================================
-  // Empty state — city-aware
-  // ============================================================
   Widget _buildEmptyState(bool hasCity) {
     return Container(
       padding: const EdgeInsets.all(AppSpace.xl),
@@ -626,9 +593,6 @@ class _DashboardState extends State<Dashboard> {
     );
   }
 
-  // ============================================================
-  // Request card — mockup style: blood type circle, hospital, urgency
-  // ============================================================
   Widget _buildRequestCard({
     required Map<String, dynamic> request,
     required Timestamp? createdAt,
@@ -656,7 +620,6 @@ class _DashboardState extends State<Dashboard> {
         ),
         child: Row(
           children: [
-            // Blood type circle — left of card, matches mockup
             Container(
               width: 40,
               height: 40,
@@ -681,7 +644,6 @@ class _DashboardState extends State<Dashboard> {
             ),
             const SizedBox(width: AppSpace.md),
 
-            // Middle: description
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -724,7 +686,6 @@ class _DashboardState extends State<Dashboard> {
 
             const SizedBox(width: AppSpace.sm),
 
-            // Right: urgency badge + chevron
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
