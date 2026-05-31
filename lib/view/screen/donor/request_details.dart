@@ -7,7 +7,7 @@ import 'package:timeago/timeago.dart' as timeago;
 import 'package:damulink/configs/theme.dart';
 import 'package:damulink/configs/blood_compatibility.dart';
 import 'package:damulink/configs/launch_utils.dart';
-import 'package:damulink/view/screen/donor/info_row.dart';
+import 'package:damulink/view/widgets/info_row.dart';
 
 class RequestDetailsScreen extends StatefulWidget {
   const RequestDetailsScreen({super.key});
