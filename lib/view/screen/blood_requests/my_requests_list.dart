@@ -19,7 +19,6 @@ class _MyRequestsListState extends State<MyRequestsList> {
 
   final Map<String, _CachedPrivate> _privateCache = {};
   static const Duration _cacheTTL = Duration(minutes: 5);
-
   static const int _streamLimit = 50;
 
   Stream<List<Map<String, dynamic>>> _requestsStream() {
@@ -30,7 +29,7 @@ class _MyRequestsListState extends State<MyRequestsList> {
         .collection('blood_requests')
         .where('requester_id', isEqualTo: uid)
         .orderBy('created_at', descending: true)
-        .limit(_streamLimit) // PERF: cap at 50 most recent
+        .limit(_streamLimit)
         .snapshots()
         .asyncMap((snapshot) async {
       final now = DateTime.now();
@@ -52,7 +51,7 @@ class _MyRequestsListState extends State<MyRequestsList> {
         }
       }
 
-      // Fetch only what's needed, in parallel
+      // Fetch only the uncached private docs, in parallel.
       if (idsToFetch.isNotEmpty) {
         final futures = idsToFetch.map((id) async {
           try {
@@ -76,7 +75,6 @@ class _MyRequestsListState extends State<MyRequestsList> {
         await Future.wait(futures);
       }
 
-      // Build merged list
       final merged = <Map<String, dynamic>>[];
       for (final doc in snapshot.docs) {
         final public = doc.data();
@@ -92,18 +90,18 @@ class _MyRequestsListState extends State<MyRequestsList> {
           'contact_phone': private['contact_phone'],
           'requester_full_name': private['requester_full_name'],
           '_is_incomplete': _isIncompleteRequest(public, private),
-          // PERF: precompute timeago string once per stream emission
+          // Precompute timeago once per emission, not on every rebuild.
           '_time_ago': createdAt != null
               ? timeago.format(createdAt.toDate())
               : 'just now',
         });
       }
 
-      // Cache cleanup: drop entries for deleted docs (bound memory)
+      // Drop cache entries for deleted docs to bound memory.
       final currentIds = snapshot.docs.map((d) => d.id).toSet();
       _privateCache.removeWhere((id, _) => !currentIds.contains(id));
 
-      // Critical pending requests rise to the top
+      // Critical pending requests rise to the top.
       merged.sort((a, b) {
         final aCritical = _isHighPriority(a);
         final bCritical = _isHighPriority(b);
@@ -141,9 +139,7 @@ class _MyRequestsListState extends State<MyRequestsList> {
     return urgency == 'critical' && status == 'pending';
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // ACTIONS
-  // ─────────────────────────────────────────────────────────────
+  // ─── ACTIONS ──────────────────────────────────────────────────
 
   void _showMarkDoneDialog(Map<String, dynamic> request) {
     HapticFeedback.lightImpact();
@@ -331,8 +327,8 @@ class _MyRequestsListState extends State<MyRequestsList> {
     );
   }
 
-  /// Delete the public doc only. The Cloud Function
-  /// `onBloodRequestDeleted` cascades the rest server-side.
+  /// Deletes the public doc only; the onBloodRequestDeleted Cloud Function
+  /// cascades the rest server-side.
   Future<void> _deleteRequest(String requestId) async {
     try {
       _privateCache.remove(requestId);
@@ -364,19 +360,18 @@ class _MyRequestsListState extends State<MyRequestsList> {
     });
   }
 
- void _openRequestDetails(Map<String, dynamic> request) {
-  // For now, tapping a card on My Requests does nothing.
-  // The card already shows all needed info (status, responses, mark done).
-  // A dedicated requester details screen can be added later if needed.
-  if (request['_is_incomplete'] == true) {
-    _showSnack(
-      'This request is incomplete. Please delete it and post a new one.',
-      isError: true,
-    );
-    return;
+  // Tapping a card is intentionally a no-op for now — the card shows
+  // everything; incomplete requests just prompt to delete.
+  void _openRequestDetails(Map<String, dynamic> request) {
+    if (request['_is_incomplete'] == true) {
+      _showSnack(
+        'This request is incomplete. Please delete it and post a new one.',
+        isError: true,
+      );
+      return;
+    }
+    HapticFeedback.selectionClick();
   }
-  HapticFeedback.selectionClick();
-}
 
   void _showSnack(String message, {required bool isError}) {
     if (!mounted) return;
@@ -435,9 +430,7 @@ class _MyRequestsListState extends State<MyRequestsList> {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // BUILD
-  // ─────────────────────────────────────────────────────────────
+  // ─── BUILD ────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -445,7 +438,6 @@ class _MyRequestsListState extends State<MyRequestsList> {
       stream: _requestsStream(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          // PERF: Show skeleton instead of generic spinner
           return _buildSkeletonList();
         }
 
@@ -475,12 +467,11 @@ class _MyRequestsListState extends State<MyRequestsList> {
               120,
             ),
             itemCount: requests.length,
-            // PERF: physics + cache helps scroll performance
             physics: const AlwaysScrollableScrollPhysics(),
             cacheExtent: 600,
             itemBuilder: (context, index) {
               final request = requests[index];
-              // PERF: ValueKey lets Flutter reuse widgets instead of rebuilding
+              // ValueKey lets Flutter reuse cards instead of rebuilding.
               return _RequestCardWrapper(
                 key: ValueKey(request['id']),
                 request: request,
@@ -496,10 +487,6 @@ class _MyRequestsListState extends State<MyRequestsList> {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // SKELETON LOADER (perceived performance)
-  // ─────────────────────────────────────────────────────────────
-
   Widget _buildSkeletonList() {
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(
@@ -513,9 +500,7 @@ class _MyRequestsListState extends State<MyRequestsList> {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // STATES
-  // ─────────────────────────────────────────────────────────────
+  // ─── STATES ───────────────────────────────────────────────────
 
   Widget _buildEmptyState() {
     return Center(
@@ -631,7 +616,6 @@ class _MyRequestsListState extends State<MyRequestsList> {
   }
 }
 
-/// Cached private doc with timestamp for TTL expiry
 class _CachedPrivate {
   final Map<String, dynamic> data;
   final DateTime fetchedAt;
@@ -639,10 +623,8 @@ class _CachedPrivate {
   const _CachedPrivate({required this.data, required this.fetchedAt});
 }
 
-// ─────────────────────────────────────────────────────────────
-// REQUEST CARD WIDGETS (extracted for PERF — only rebuilds when
-// the specific request's data changes, not the whole list)
-// ─────────────────────────────────────────────────────────────
+// Card widgets are separate so each rebuilds only when its own request
+// changes, not the whole list.
 
 class _RequestCardWrapper extends StatelessWidget {
   final Map<String, dynamic> request;
@@ -978,8 +960,6 @@ class _NormalCard extends StatelessWidget {
       ),
     );
   }
-
-  // helpers (kept inside the card class to keep file scoped)
 
   Widget _buildBloodTypeCircle(
     String bloodType,
@@ -1347,7 +1327,7 @@ class _NormalCard extends StatelessWidget {
   }
 }
 
-/// Skeleton placeholder shown during initial load — improves perceived speed.
+/// Skeleton placeholder shown during initial load.
 class _SkeletonCard extends StatelessWidget {
   const _SkeletonCard();
 
