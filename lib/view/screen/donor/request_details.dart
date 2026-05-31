@@ -4,9 +4,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:get/get.dart';
 import 'package:timeago/timeago.dart' as timeago;
-import 'package:url_launcher/url_launcher.dart';
 import 'package:damulink/configs/theme.dart';
 import 'package:damulink/configs/blood_compatibility.dart';
+import 'package:damulink/configs/launch_utils.dart';
+import 'package:damulink/view/screen/donor/info_row.dart';
 
 class RequestDetailsScreen extends StatefulWidget {
   const RequestDetailsScreen({super.key});
@@ -147,52 +148,6 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
       }
     } finally {
       if (mounted) setState(() => _isWithdrawing = false);
-    }
-  }
-
-  Future<void> _callPhone(String phone) async {
-    HapticFeedback.lightImpact();
-    final uri = Uri.parse('tel:$phone');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    } else {
-      _showSnack('Could not open dialer', isError: true);
-    }
-  }
-
-  Future<void> _openWhatsApp(String phone) async {
-    HapticFeedback.lightImpact();
-    // wa.me needs full international format, no '+' and no leading 0.
-    // Stored numbers are Kenyan local format (e.g. 0785236442).
-    var digits = phone.replaceAll(RegExp(r'[^0-9]'), '');
-    if (digits.startsWith('0')) {
-      digits = '254${digits.substring(1)}';
-    } else if (!digits.startsWith('254') && digits.length == 9) {
-      digits = '254$digits';
-    }
-    final uri = Uri.parse('https://wa.me/$digits');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      _showSnack('WhatsApp is not installed', isError: true);
-    }
-  }
-
-  Future<void> _openDirections(
-      String hospital, String area, String placeId) async {
-    HapticFeedback.lightImpact();
-    final dest = Uri.encodeComponent(
-      area.isNotEmpty ? '$hospital, $area' : hospital,
-    );
-    var url = 'https://www.google.com/maps/dir/?api=1&destination=$dest';
-    if (placeId.isNotEmpty) {
-      url += '&destination_place_id=$placeId';
-    }
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      _showSnack('Could not open maps', isError: true);
     }
   }
 
@@ -340,31 +295,28 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
             _buildCompatibilityBanner(isCompatible),
           if (_donorBloodType != null) const SizedBox(height: AppSpace.lg),
           _buildInfoCard([
-            // Hospital row is tappable in pre-commit — a donor can preview
-            // the route before deciding to offer. Post-commit has a
-            // dedicated Get Directions button instead.
-            _InfoRow(
+            // Tappable in pre-commit so a donor can preview the route
+            // before offering; post-commit has its own Directions button.
+            InfoRow(
               icon: Icons.local_hospital_outlined,
               label: 'Hospital',
               value: hospital,
               caption: hospitalArea.isNotEmpty ? hospitalArea : null,
-              onTap: () => _openDirections(hospital, hospitalArea, placeId),
+              onTap: () => _handleDirections(hospital, hospitalArea, placeId),
             ),
-            // No caption here — the privacy notice panel below explains
-            // why only initials are shown. Repeating it on the row was
-            // redundant friction.
-            _InfoRow(
+            // No caption — the privacy panel below explains the initials.
+            InfoRow(
               icon: Icons.person_outline,
               label: 'Patient',
               value: initials.isNotEmpty ? initials : '—',
             ),
-            _InfoRow(
+            InfoRow(
               icon: Icons.access_time,
               label: 'Posted',
               value: timeAgo,
             ),
             if (neededBy != null)
-              _InfoRow(
+              InfoRow(
                 icon: Icons.event_outlined,
                 label: 'Needed by',
                 value: _formatNeededBy(neededBy.toDate()),
@@ -472,8 +424,7 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
     );
   }
 
-  // Compact version used in the post-commit view, where the donor has
-  // already committed and the priority shifts to contact + directions.
+  // Compact version for the post-commit view (focus shifts to contact).
   Widget _buildCompactBloodSummary(
     String bloodType,
     String urgency,
@@ -632,7 +583,7 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
     );
   }
 
-  Widget _buildInfoCard(List<_InfoRow> rows) {
+  Widget _buildInfoCard(List<InfoRow> rows) {
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
@@ -953,13 +904,13 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
               ),
             ),
             const SizedBox(height: AppSpace.md),
-            _InfoRow(
+            InfoRow(
               icon: Icons.person,
               label: 'Patient',
               value: patientName,
             ),
             Divider(color: AppColors.border.withOpacity(0.5)),
-            _InfoRow(
+            InfoRow(
               icon: Icons.contact_phone,
               label: 'Contact person',
               value: requesterName,
@@ -967,14 +918,14 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
             ),
             if (phone.isNotEmpty) ...[
               Divider(color: AppColors.border.withOpacity(0.5)),
-              _InfoRow(
+              InfoRow(
                 icon: Icons.phone_outlined,
                 label: 'Phone',
                 value: phone,
               ),
             ],
             Divider(color: AppColors.border.withOpacity(0.5)),
-            _InfoRow(
+            InfoRow(
               icon: Icons.local_hospital_outlined,
               label: 'Hospital',
               value: hospital,
@@ -986,7 +937,7 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () => _callPhone(phone),
+                      onPressed: () => _handleCall(phone),
                       icon: const Icon(Icons.phone,
                           size: 18, color: AppColors.success),
                       label: Text(
@@ -1009,7 +960,7 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
                   const SizedBox(width: AppSpace.sm),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () => _openWhatsApp(phone),
+                      onPressed: () => _handleWhatsApp(phone),
                       icon: const Icon(Icons.chat_bubble_outline,
                           size: 18, color: AppColors.primary),
                       label: Text(
@@ -1037,7 +988,7 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () =>
-                    _openDirections(hospital, hospitalArea, placeId),
+                    _handleDirections(hospital, hospitalArea, placeId),
                 icon: const Icon(Icons.directions_outlined,
                     size: 18, color: AppColors.primary),
                 label: Text(
@@ -1155,6 +1106,32 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
     );
   }
 
+  // ─── EXTERNAL LAUNCH HANDLERS ────────────────────────────
+  // Thin wrappers: LaunchUtils does the launching, these show a snackbar
+  // on failure.
+
+  Future<void> _handleCall(String phone) async {
+    final ok = await LaunchUtils.callPhone(phone);
+    if (!ok && mounted) {
+      _showSnack('Could not open dialer', isError: true);
+    }
+  }
+
+  Future<void> _handleWhatsApp(String phone) async {
+    final ok = await LaunchUtils.openWhatsApp(phone);
+    if (!ok && mounted) {
+      _showSnack('WhatsApp is not installed', isError: true);
+    }
+  }
+
+  Future<void> _handleDirections(
+      String hospital, String area, String placeId) async {
+    final ok = await LaunchUtils.openDirections(hospital, area, placeId);
+    if (!ok && mounted) {
+      _showSnack('Could not open maps', isError: true);
+    }
+  }
+
   // ─── SHARED ──────────────────────────────────────────────
 
   Widget _buildLoadingState() {
@@ -1239,97 +1216,5 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
       default:
         return AppColors.primary;
     }
-  }
-}
-
-class _InfoRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  final String? caption;
-  final VoidCallback? onTap;
-
-  const _InfoRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.caption,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final content = Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpace.sm),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-            ),
-            alignment: Alignment.center,
-            child: Icon(icon, size: 16, color: AppColors.textSecondary),
-          ),
-          const SizedBox(width: AppSpace.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: AppText.caption.copyWith(
-                    color: AppColors.textTertiary,
-                    fontSize: 11,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  style: AppText.body.copyWith(
-                    color: AppColors.textPrimary,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                ),
-                if (caption != null) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    caption!,
-                    style: AppText.caption.copyWith(
-                      color: AppColors.textTertiary,
-                      fontSize: 11,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          // Subtle chevron when the row is tappable — standard tap
-          // affordance, lets the user know they can drill in.
-          if (onTap != null)
-            Padding(
-              padding: const EdgeInsets.only(left: AppSpace.sm, top: 8),
-              child: Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: AppColors.textTertiary,
-              ),
-            ),
-        ],
-      ),
-    );
-
-    if (onTap == null) return content;
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppRadius.sm),
-      child: content,
-    );
   }
 }
